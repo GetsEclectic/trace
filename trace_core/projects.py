@@ -17,6 +17,37 @@ __all__ = [
 ]
 
 
+def _resolve_git_dir(dot_git: Path):
+    """Resolve a .git entry that may be a worktree pointer file.
+
+    Returns (canonical_git_dir, project_root). For a normal checkout the
+    canonical git dir is ``<root>/.git`` and the root is its parent. For a
+    git worktree, ``.git`` is a *file* containing ``gitdir: <path>``; we follow
+    it to the worktree's gitdir, read its ``commondir`` to find the canonical
+    ``.git``, and return the main checkout root. Returns (None, None) when the
+    entry is not a usable git dir/pointer, so detect_project keeps walking up.
+    """
+    if dot_git.is_dir():
+        return dot_git, dot_git.parent
+    if dot_git.is_file():
+        try:
+            content = dot_git.read_text().strip()
+        except OSError:
+            return None, None
+        if not content.startswith("gitdir:"):
+            return None, None
+        worktree_gitdir = Path(content.split(":", 1)[1].strip())
+        if not worktree_gitdir.is_absolute():
+            worktree_gitdir = (dot_git.parent / worktree_gitdir).resolve()
+        commondir_file = worktree_gitdir / "commondir"
+        if commondir_file.is_file():
+            commondir = (worktree_gitdir / commondir_file.read_text().strip()).resolve()
+        else:
+            commondir = worktree_gitdir
+        return commondir, commondir.parent
+    return None, None
+
+
 def detect_project(cwd: Optional[str] = None) -> Optional[Dict[str, str]]:
     """Detect project from git repository.
 
@@ -45,27 +76,35 @@ def detect_project(cwd: Optional[str] = None) -> Optional[Dict[str, str]]:
 
     # Walk up directory tree looking for .git
     for parent in [current_path] + list(current_path.parents):
-        git_dir = parent / ".git"
+        dot_git = parent / ".git"
 
-        if git_dir.exists():
-            # Found a git repository
-            project_path = str(parent.absolute())
+        if not dot_git.exists():
+            continue
 
-            # Try to extract project_id and name from git remote
-            project_id = _extract_project_id_from_git_remote(git_dir)
-            project_name = _extract_name_from_git_remote(git_dir)
+        # Resolve worktree pointer files to the canonical .git + main checkout
+        # root, so a `trc` write from inside a worktree does not register a new
+        # per-worktree project and truncate the parent's issues.jsonl.
+        canonical_git_dir, project_root = _resolve_git_dir(dot_git)
+        if canonical_git_dir is None or project_root is None:
+            continue
 
-            # Fall back to absolute path and directory name if no remote found
-            if not project_id:
-                project_id = project_path
+        project_path = str(project_root.absolute())
 
-            if not project_name:
-                project_name = parent.name
+        # Try to extract project_id and name from git remote
+        project_id = _extract_project_id_from_git_remote(canonical_git_dir)
+        project_name = _extract_name_from_git_remote(canonical_git_dir)
 
-            # Sanitize the project name
-            project_name = sanitize_project_name(project_name)
+        # Fall back to absolute path and directory name if no remote found
+        if not project_id:
+            project_id = project_path
 
-            return {"id": project_id, "name": project_name, "path": project_path}
+        if not project_name:
+            project_name = project_root.name
+
+        # Sanitize the project name
+        project_name = sanitize_project_name(project_name)
+
+        return {"id": project_id, "name": project_name, "path": project_path}
 
     # Not in a git repository
     return None
