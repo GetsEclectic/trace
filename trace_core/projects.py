@@ -319,6 +319,14 @@ def _extract_project_id_from_git_remote(git_dir: Path) -> Optional[str]:
             # Unknown format
             return None
 
+        # Cloud-sandbox egress proxy rewrites every remote to
+        # local_proxy@127.0.0.1:<port>/git/<owner>/<repo>, where <port> is
+        # ephemeral (new each sandbox). Strip the proxy prefix so the
+        # project_id is stable across sandboxes -> <owner>/<repo>.
+        proxy = re.match(r"^local_proxy@[^/]+/git/(.+)$", url)
+        if proxy:
+            url = proxy.group(1)
+
         return url if url else None
 
     except Exception:
