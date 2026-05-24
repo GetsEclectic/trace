@@ -14,7 +14,7 @@ from trace_core.projects import _extract_project_id_from_git_remote
 
 def _git_dir_with_url(tmp: Path, url: str) -> Path:
     gd = tmp / ".git"
-    gd.mkdir()
+    gd.mkdir(parents=True)
     (gd / "config").write_text(
         "[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n" % url
     )

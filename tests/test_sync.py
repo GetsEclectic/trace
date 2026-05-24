@@ -416,6 +416,42 @@ def test_sync_project_handles_missing_jsonl(db_connection, tmp_path):
     sync_project(db_connection, str(tmp_path))
 
 
+def test_sync_project_registers_project(db_connection, tmp_path):
+    """Sync should register the project so writes work without a manual init.
+
+    Regression for the ephemeral-cloud-sandbox case: a fresh per-machine DB
+    has an empty projects table; a read syncs issues but, before this fix,
+    left the project unregistered, so the next write aborted with
+    "Cannot find project path".
+    """
+    from trc_main import sync_project, detect_project
+
+    # Create git repo (required for sync_project to detect a project)
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text("[core]\n\trepositoryformatversion = 0\n")
+
+    project = detect_project(cwd=str(tmp_path))
+    assert project is not None
+
+    # Projects table starts empty for this project_id
+    cursor = db_connection.execute(
+        "SELECT COUNT(*) FROM projects WHERE id = ?", (project["id"],)
+    )
+    assert cursor.fetchone()[0] == 0
+
+    sync_project(db_connection, str(tmp_path))
+
+    # After sync the project is registered with a resolvable filesystem path
+    cursor = db_connection.execute(
+        "SELECT name, current_path FROM projects WHERE id = ?", (project["id"],)
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    assert row[0] == project["name"]
+    assert row[1] == project["path"]
+
+
 def test_sync_project_updates_last_sync_time(db_connection, tmp_path):
     """Should update last sync timestamp after import."""
     from trc_main import sync_project, get_last_sync_time, detect_project

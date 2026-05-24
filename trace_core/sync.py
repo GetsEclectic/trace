@@ -76,6 +76,19 @@ def sync_project(db: sqlite3.Connection, project_path: str) -> None:
 
     project_id = project["id"]
 
+    # Self-register the project so write commands (close/update/comment) can
+    # resolve its filesystem path. A fresh per-machine DB — e.g. the SQLite cache
+    # rebuilt on every ephemeral cloud sandbox — starts with an empty projects
+    # table. Issues are seeded by the first read that syncs (`trc list`), but
+    # without this upsert the project stays unregistered, so the next write
+    # aborts with "Cannot find project path" until `trc init` is run by hand.
+    # Idempotent: INSERT OR REPLACE keyed on the stable project_id.
+    db.execute(
+        "INSERT OR REPLACE INTO projects (id, name, current_path) VALUES (?, ?, ?)",
+        (project_id, project["name"], project["path"]),
+    )
+    db.commit()
+
     # AUTO-MERGE: Check if project_id changed (e.g., local path -> URL)
     # Find issues with different project_id but for this same path
     cursor = db.execute(
