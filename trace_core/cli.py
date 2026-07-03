@@ -396,6 +396,8 @@ def close(issue_ids: Annotated[list[str], typer.Argument(help="Issue ID(s) to cl
 def ready(
     project: Annotated[Optional[str], typer.Option(help="Filter by project - name or path (use 'any' for all projects)")] = None,
     status: Annotated[Optional[str], typer.Option(help="Filter by status (defaults to 'open', use 'any' for all)")] = None,
+    limit: Annotated[int, typer.Option(help="Max issues to show, highest priority first (0 = no limit)")] = 20,
+    show_all: Annotated[bool, typer.Option("--all", help="Show all ready issues (same as --limit 0)")] = False,
 ):
     """Show ready work (not blocked)."""
     lock_path = get_lock_path()
@@ -455,9 +457,17 @@ def ready(
             db.close()
             return
 
+        # Bound the output: issues arrive priority-sorted from list_issues, so
+        # the first N are the highest-priority ready work.
+        total = len(ready_issues)
+        if show_all or limit <= 0:
+            shown = ready_issues
+        else:
+            shown = ready_issues[:limit]
+
         # Print ready issues
         print("Ready work (not blocked):\n")
-        for issue in ready_issues:
+        for issue in shown:
             priority_label = f"P{issue['priority']}"
             print(f"○ {issue['id']} [{priority_label}] {issue['title']}")
 
@@ -469,6 +479,9 @@ def ready(
                     parent_issue = get_issue(db, dep["depends_on_id"])
                     if parent_issue:
                         print(f"   └─ child of: {parent_issue['id']} - {parent_issue['title']}")
+
+        if len(shown) < total:
+            print(f"\nShowing {len(shown)} of {total} ready issues (highest priority first). Use --all or --limit N for the rest.")
 
         db.close()
 
